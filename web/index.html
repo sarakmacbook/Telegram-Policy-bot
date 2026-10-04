@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f8">
+  <meta name="description" content="Private Telegram content moderation review console">
+  <title>Policy Review · Telegram moderation</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="login-view" class="login-screen" hidden>
+    <div class="login-card">
+      <a class="brand brand-login" href="#" aria-label="Policy Review home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6.1 14.8 25 7.4c1.1-.4 2.1.6 1.7 1.7l-7.4 18.8c-.5 1.3-2.3 1.1-2.6-.3l-1.4-6.8-6.8-1.4c-1.4-.3-1.6-2.1-.3-2.6Z" fill="currentColor"/><path d="m15.3 20.8 7.3-7.4" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.7"/></svg></span>
+        <span><strong>Policy Review</strong><small>Telegram moderation</small></span>
+      </a>
+      <div class="login-intro">
+        <span class="eyebrow">ADMIN WORKSPACE</span>
+        <h1>Review with context.<br><em>Act with care.</em></h1>
+        <p>Sign in to view flagged messages and securely review quarantined content.</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <label for="admin-token">Admin access key</label>
+        <div class="input-with-icon">
+          <span class="field-icon" aria-hidden="true">⌑</span>
+          <input id="admin-token" name="token" type="password" autocomplete="current-password" placeholder="Enter your admin key" required>
+          <button id="toggle-token" class="icon-button input-action" type="button" aria-label="Show admin key">◉</button>
+        </div>
+        <button class="button button-primary login-submit" type="submit">Open review console <span aria-hidden="true">→</span></button>
+        <p id="login-error" class="form-error" role="alert"></p>
+      </form>
+      <div id="demo-hint" class="demo-hint" hidden></div>
+      <div class="login-foot"><span class="lock-dot"></span> Private workspace · content is access-controlled</div>
+    </div>
+    <div class="login-side">
+      <div class="login-side-grid"></div>
+      <div class="login-side-content">
+        <span class="side-kicker"><span class="pulse-dot"></span> HUMAN-IN-THE-LOOP MODERATION</span>
+        <h2>Signals, not verdicts.</h2>
+        <p>Surface potential policy concerns, preserve the evidence, and let a moderator make the final call.</p>
+        <div class="side-stat-row">
+          <div><strong>01</strong><span>Review</span></div><i></i>
+          <div><strong>02</strong><span>Decide</span></div><i></i>
+          <div><strong>03</strong><span>Restore</span></div>
+        </div>
+      </div>
+      <div class="side-foot">Built for transparent, accountable community care.</div>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-top">
+        <a class="brand" href="#" aria-label="Policy Review">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6.1 14.8 25 7.4c1.1-.4 2.1.6 1.7 1.7l-7.4 18.8c-.5 1.3-2.3 1.1-2.6-.3l-1.4-6.8-6.8-1.4c-1.4-.3-1.6-2.1-.3-2.6Z" fill="currentColor"/><path d="m15.3 20.8 7.3-7.4" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.7"/></svg></span>
+          <span><strong>Policy Review</strong><small>Moderation console</small></span>
+        </a>
+        <div class="workspace-switcher">
+          <span class="workspace-avatar">C</span>
+          <span class="workspace-label"><strong>Community care</strong><small>Telegram workspace</small></span>
+          <span class="chevron">⌄</span>
+        </div>
+      </div>
+      <div class="side-label">WORKSPACE</div>
+      <nav class="side-nav" aria-label="Main navigation">
+        <button class="nav-item is-active" data-view="overview"><span class="nav-icon">▦</span><span>Overview</span></button>
+        <button class="nav-item" data-view="queue"><span class="nav-icon">⌑</span><span>Review queue</span><span id="nav-pending" class="nav-count">0</span></button>
+        <button class="nav-item" data-view="history"><span class="nav-icon">↻</span><span>Case history</span></button>
+      </nav>
+      <div class="side-label side-label-second">CONFIGURE</div>
+      <nav class="side-nav" aria-label="Configuration">
+        <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="privacy-card">
+        <div class="privacy-icon"><span class="lock-glyph">⌑</span></div>
+        <strong>Private by design</strong>
+        <p>Only flagged content is saved. Image previews stay blurred until revealed.</p>
+        <button id="privacy-learn" class="text-link" type="button">How it works <span>→</span></button>
+      </div>
+      <div class="sidebar-profile">
+        <div class="profile-avatar">AR</div>
+        <div class="profile-meta"><strong>Admin reviewer</strong><small>Workspace owner</small></div>
+        <button id="logout-button" class="icon-button logout-button" title="Sign out" aria-label="Sign out">↗</button>
+      </div>
+    </aside>
+
+    <div id="mobile-backdrop" class="mobile-backdrop" hidden></div>
+    <main class="main-area">
+      <header class="topbar">
+        <button id="mobile-menu" class="icon-button mobile-menu" aria-label="Open navigation">☰</button>
+        <div class="breadcrumb"><span>Moderation</span><span class="breadcrumb-slash">/</span><strong id="topbar-title">Overview</strong></div>
+        <div class="topbar-actions">
+          <span id="connection-indicator" class="connection-pill"><span class="status-dot"></span><span>Connecting…</span></span>
+          <span class="topbar-divider"></span>
+          <button id="topbar-help" class="help-button" type="button" title="Help">?</button>
+          <button id="topbar-avatar" class="profile-avatar small-avatar" type="button" aria-label="Admin account">AR</button>
+        </div>
+      </header>
+
+      <div class="page-wrap">
+        <div id="demo-banner" class="demo-banner" hidden><span class="demo-badge">DEMO</span><span>Sample records only — no Telegram messages have been changed.</span><button id="demo-banner-close" type="button" aria-label="Dismiss demo banner">×</button></div>
+
+        <section id="overview-view" class="view-section">
+          <div class="page-heading heading-row">
+            <div>
+              <div class="eyebrow page-eyebrow"><span class="eyebrow-line"></span> MODERATION CENTER</div>
+              <h1>Good day, reviewer <span class="wave">✳</span></h1>
+              <p>Here’s what needs a closer look across your monitored chats.</p>
+            </div>
+            <div class="heading-tools">
+              <span class="date-chip"><span class="calendar-mark">▦</span><span id="current-date">Today</span></span>
+              <button id="open-test-scan" class="button button-outline"><span class="button-plus">＋</span> Test a message</button>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card metric-primary">
+              <div class="metric-head"><span>Awaiting review</span><span class="metric-icon icon-queue">⌑</span></div>
+              <div class="metric-value-row"><strong id="stat-pending">—</strong><span id="urgent-chip" class="metric-trend trend-warn">— urgent</span></div>
+              <div class="metric-foot"><span class="tiny-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>Open cases</span></div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-head"><span>Messages hidden</span><span class="metric-icon icon-hidden">◉</span></div>
+              <div class="metric-value-row"><strong id="stat-hidden">—</strong><span class="metric-context">saved for review</span></div>
+              <div class="metric-foot"><span class="metric-mini-mark">↳</span><span>Restorable copies</span></div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-head"><span>Reviewed today</span><span class="metric-icon icon-reviewed">✓</span></div>
+              <div class="metric-value-row"><strong id="stat-reviewed">—</strong><span class="metric-context">decisions logged</span></div>
+              <div class="metric-foot"><span class="metric-mini-mark green-mark">↗</span><span>Human-reviewed</span></div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-head"><span>Review scope</span><span class="metric-icon icon-scope">◎</span></div>
+              <div class="metric-value-row"><strong id="stat-jurisdictions">—</strong><span class="metric-context">jurisdictions</span></div>
+              <div id="auto-hide-foot" class="metric-foot"><span class="scope-indicator"></span><span>Auto-hide is off</span></div>
+            </article>
+          </div>
+
+          <div id="auto-hide-alert" class="status-banner">
+            <span class="status-banner-icon">i</span>
+            <div><strong>Review-first mode is on</strong><span>Flagged messages stay in the chat until a moderator decides what to do.</span></div>
+            <button data-go-settings class="text-link" type="button">Configure <span>→</span></button>
+          </div>
+
+          <div class="section-head queue-section-head">
+            <div><div class="eyebrow section-eyebrow">PRIORITY INBOX</div><h2>Needs your attention <span id="section-pending-count" class="subtle-count">0</span></h2></div>
+            <button id="see-all-queue" class="text-link" type="button">Open review queue <span>→</span></button>
+          </div>
+          <div class="case-workspace overview-workspace">
+            <section class="case-list-panel" aria-label="Open cases">
+              <div class="list-toolbar">
+                <div class="list-label"><span class="live-dot"></span><strong>Open cases</strong><span id="list-count" class="list-count">0</span></div>
+                <div class="filter-select-wrap"><select id="priority-filter" aria-label="Filter by severity"><option value="all">All priorities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select><span>⌄</span></div>
+              </div>
+              <div id="case-list" class="case-list"><div class="list-loading">Loading cases…</div></div>
+            </section>
+            <section id="case-detail" class="case-detail-panel" aria-label="Selected case details">
+              <div class="detail-empty"><div class="empty-orbit"><span>⌑</span><i></i><b></b></div><h3>Select a case</h3><p>Choose a flagged message to review its context, evidence, and available actions.</p></div>
+            </section>
+          </div>
+          <div class="disclaimer-note"><span>ⓘ</span><p>Automated checks are preliminary signals, not legal findings. Always review context before taking action.</p></div>
+        </section>
+
+        <section id="queue-view" class="view-section" hidden>
+          <div class="page-heading heading-row compact-heading">
+            <div><div class="eyebrow page-eyebrow"><span class="eyebrow-line"></span> HUMAN REVIEW</div><h1>Review queue</h1><p>Potential concerns surfaced for a moderator — not automatic verdicts.</p></div>
+            <div class="heading-tools"><button id="queue-test-scan" class="button button-outline"><span class="button-plus">＋</span> Test a message</button></div>
+          </div>
+          <div class="queue-summary-strip"><span class="live-dot"></span><strong id="queue-summary-count">0 open cases</strong><span>sorted by severity and newest activity</span></div>
+          <div class="case-workspace full-workspace">
+            <section class="case-list-panel" aria-label="Review queue">
+              <div class="list-toolbar queue-toolbar">
+                <div class="list-label"><strong>Flagged messages</strong><span id="queue-list-count" class="list-count">0</span></div>
+                <label class="search-box"><span aria-hidden="true">⌕</span><input id="queue-search" type="search" placeholder="Search sender, chat, message…" autocomplete="off"><kbd>⌘ K</kbd></label>
+                <div class="filter-select-wrap"><select id="queue-priority-filter" aria-label="Filter by severity"><option value="all">All priorities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select><span>⌄</span></div>
+              </div>
+              <div id="queue-case-list" class="case-list"></div>
+            </section>
+            <section id="queue-case-detail" class="case-detail-panel" aria-label="Selected case details"><div class="detail-empty"><div class="empty-orbit"><span>⌑</span><i></i><b></b></div><h3>Select a case</h3><p>Choose a case to see its moderation signals and decide what should happen next.</p></div></section>
+          </div>
+          <div class="disclaimer-note"><span>ⓘ</span><p>Automated checks are preliminary signals, not legal findings. Always review context before taking action.</p></div>
+        </section>
+
+        <section id="history-view" class="view-section" hidden>
+          <div class="page-heading heading-row compact-heading"><div><div class="eyebrow page-eyebrow"><span class="eyebrow-line"></span> AUDIT TRAIL</div><h1>Case history</h1><p>Past decisions stay available for accountability and follow-up.</p></div><div class="heading-tools"><span class="history-label"><span class="history-dot"></span> Retained in this workspace</span></div></div>
+          <div class="case-workspace full-workspace history-workspace">
+            <section class="case-list-panel" aria-label="All moderation cases">
+              <div class="list-toolbar queue-toolbar">
+                <div class="list-label"><strong>All cases</strong><span id="history-list-count" class="list-count">0</span></div>
+                <label class="search-box"><span aria-hidden="true">⌕</span><input id="history-search" type="search" placeholder="Search cases…" autocomplete="off"></label>
+                <div class="filter-select-wrap"><select id="history-status-filter" aria-label="Filter by case status"><option value="all">All statuses</option><option value="pending">Open</option><option value="approved">Approved</option><option value="dismissed">Dismissed</option></select><span>⌄</span></div>
+              </div>
+              <div id="history-case-list" class="case-list"></div>
+            </section>
+            <section id="history-case-detail" class="case-detail-panel" aria-label="Selected case details"><div class="detail-empty"><div class="empty-orbit"><span>↻</span><i></i><b></b></div><h3>Choose a case</h3><p>Review the original signal and the moderator’s recorded outcome.</p></div></section>
+          </div>
+        </section>
+
+        <section id="settings-view" class="view-section settings-view" hidden>
+          <div class="page-heading compact-heading"><div><div class="eyebrow page-eyebrow"><span class="eyebrow-line"></span> WORKSPACE CONTROLS</div><h1>Settings</h1><p>Choose what to surface, how to handle it, and where your policy scope applies.</p></div></div>
+          <div class="settings-grid">
+            <div class="settings-main-column">
+              <section class="settings-card">
+                <div class="settings-card-heading"><div class="settings-heading-icon icon-telegram">↗</div><div><h2>Telegram connection</h2><p>Connect a bot to receive group messages and apply moderation actions.</p></div><span id="bot-connection-badge" class="setting-status-badge">Not connected</span></div>
+                <div class="connection-steps">
+                  <div class="connection-step"><span>01</span><div><strong>Create a Telegram bot</strong><p>Use <b>@BotFather</b> to create a bot and keep its token private.</p></div><i class="step-check">✓</i></div>
+                  <div class="connection-step"><span>02</span><div><strong>Grant group permissions</strong><p>Add it as an admin with delete-message permission. Disable BotFather privacy mode to receive regular group messages, and give members appropriate notice before monitoring.</p></div><i class="step-check">✓</i></div>
+                  <div class="connection-step"><span>03</span><div><strong>Configure the webhook</strong><p>Set <code>BOT_TOKEN</code> and <code>WEBHOOK_SECRET</code> on the server, then register <code>/telegram/webhook</code> with Telegram.</p></div><i class="step-check">✓</i></div>
+                </div>
+                <div class="connection-footer"><span class="lock-mini">⌑</span><span>Bot tokens are server-side only and are never sent to this browser.</span><button id="copy-webhook-path" class="text-link" type="button">Copy webhook path</button></div>
+              </section>
+
+              <section class="settings-card">
+                <div class="settings-card-heading"><div class="settings-heading-icon icon-scan">⌕</div><div><h2>Scanning &amp; actions</h2><p>Local phrase checks create review cases; image content is not automatically classified.</p></div></div>
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>Queue all images for review</strong><p>Send every image a moderator can see to the review queue. Image pixels are not automatically classified; this can create many cases.</p></div>
+                  <label class="switch"><input id="setting-review-media" type="checkbox"><span class="switch-track"></span><span class="sr-only">Queue all images for review</span></label>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>Auto-hide text-flagged messages</strong><p>Delete a message after a text phrase check flags it. The saved case remains available for review and restoration.</p><span class="setting-caution">Requires Telegram delete-message permission. False positives are possible.</span></div>
+                  <label class="switch"><input id="setting-auto-hide" type="checkbox"><span class="switch-track"></span><span class="sr-only">Auto-hide text-flagged messages</span></label>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>Auto-hide visual-review media</strong><p>Only applies when image review is enabled. This removes every queued image before a person sees it.</p><span class="setting-caution">Use with care — this is not an image classifier.</span></div>
+                  <label class="switch"><input id="setting-auto-hide-media" type="checkbox"><span class="switch-track"></span><span class="sr-only">Auto-hide visual-review media</span></label>
+                </div>
+                <div class="setting-row setting-row-last">
+                  <div class="setting-copy"><strong>Post a notice when a message is auto-hidden</strong><p>Tell the group a message was removed and a moderator will review it.</p></div>
+                  <label class="switch"><input id="setting-notify" type="checkbox"><span class="switch-track"></span><span class="sr-only">Post a group notice</span></label>
+                </div>
+              </section>
+
+              <section class="settings-card">
+                <div class="settings-card-heading"><div class="settings-heading-icon icon-jurisdiction">◎</div><div><h2>Policy scope &amp; custom checks</h2><p>Jurisdictions are a review context, not a legal determination.</p></div></div>
+                <label class="field-label" for="jurisdiction-input">Jurisdictions in scope</label>
+                <input id="jurisdiction-input" class="text-input" type="text" maxlength="240" placeholder="Cambodia, Singapore, …">
+                <p class="field-help">Separate countries or regions with commas. Add local law-specific rules only after appropriate review.</p>
+                <div class="custom-rules-head"><div><strong>Custom phrase checks</strong><p>Terms only trigger human review; they are not a complete policy or law feed.</p></div><span id="custom-rule-count" class="list-count">0</span></div>
+                <div id="custom-rules-list" class="custom-rules-list"><div class="empty-rules">No custom checks yet.</div></div>
+                <form id="add-rule-form" class="add-rule-form">
+                  <input id="rule-name" class="text-input rule-name" type="text" maxlength="48" placeholder="Rule label" aria-label="Custom rule label" required>
+                  <input id="rule-terms" class="text-input rule-terms" type="text" maxlength="500" placeholder="Comma-separated phrases to flag" aria-label="Terms to flag" required>
+                  <button class="button button-small button-outline" type="submit">Add check</button>
+                </form>
+              </section>
+            </div>
+            <aside class="settings-side-column">
+              <section class="notice-card notice-amber"><div class="notice-icon">!</div><div><strong>Not legal advice</strong><p>This tool does not determine compliance with Telegram’s terms or any country’s laws. Cambodia and other local requirements change and depend on context. Consult qualified counsel.</p></div></section>
+              <section class="settings-card privacy-settings-card"><div class="settings-card-heading compact-card-heading"><div class="settings-heading-icon icon-privacy">⌑</div><div><h2>Data &amp; privacy</h2><p>Keep access narrow and retention deliberate.</p></div></div><ul class="privacy-list"><li><span>✓</span><div><strong>Only flagged messages are stored</strong><p>Unflagged content is discarded after local checks.</p></div></li><li><span>✓</span><div><strong>Evidence is private</strong><p>Saved image files are not publicly served and require your admin key.</p></div></li><li><span>✓</span><div><strong>Media is blurred first</strong><p>Moderators must intentionally reveal each archived image.</p></div></li><li><span class="privacy-warning">!</span><div><strong>Protect server storage</strong><p>The app does not encrypt evidence at rest. Use encrypted disks and backups.</p></div></li></ul><div class="retention-note"><span class="retention-mark">↗</span><p>Records remain on this server until you delete them from its data directory. Set your own retention schedule.</p></div></section>
+              <section class="test-card"><div class="test-card-art"><span class="test-orbit one"></span><span class="test-orbit two"></span><span class="test-card-icon">⌕</span></div><div><span class="eyebrow">BEFORE YOU GO LIVE</span><h3>Test your rules</h3><p>Check how a sample message is categorized without saving it to the case history.</p><button id="settings-test-scan" class="text-link" type="button">Open message tester <span>→</span></button></div></section>
+            </aside>
+          </div>
+          <div class="settings-save-bar"><span id="settings-save-status" class="save-status">Changes save to this server.</span><button id="save-settings" class="button button-primary">Save settings <span aria-hidden="true">→</span></button></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="test-modal" class="modal-backdrop" hidden>
+    <section class="modal-card test-modal-card" role="dialog" aria-modal="true" aria-labelledby="test-modal-title">
+      <div class="modal-header"><div><span class="eyebrow">LOCAL PHRASE CHECK</span><h2 id="test-modal-title">Test a message</h2></div><button class="icon-button modal-close" data-close-modal aria-label="Close">×</button></div>
+      <p class="modal-intro">Nothing is sent to Telegram or added to the case history. This test uses the workspace’s current review rules.</p>
+      <label class="field-label" for="test-message">Message text</label>
+      <textarea id="test-message" class="text-area" rows="5" placeholder="Paste a short sample to see which checks match…"></textarea>
+      <label class="media-test-check"><input id="test-has-media" type="checkbox"><span class="fake-check"></span><span>Include an image attachment</span></label>
+      <div id="test-result" class="test-result" hidden></div>
+      <div class="modal-actions"><button class="button button-outline" data-close-modal type="button">Cancel</button><button id="run-scan-test" class="button button-primary" type="button">Run test <span>→</span></button></div>
+    </section>
+  </div>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div id="privacy-modal" class="modal-backdrop" hidden>
+    <section class="modal-card privacy-modal-card" role="dialog" aria-modal="true" aria-labelledby="privacy-modal-title">
+      <div class="modal-header"><div><span class="eyebrow">HOW REVIEW WORKS</span><h2 id="privacy-modal-title">A human stays in control.</h2></div><button class="icon-button modal-close" data-close-modal aria-label="Close">×</button></div>
+      <div class="privacy-modal-body"><div><span class="step-number">01</span><p><strong>Receive only what Telegram sends the bot.</strong> Group visibility requires correct bot permissions and privacy settings. Secret Chats cannot be monitored.</p></div><div><span class="step-number">02</span><p><strong>Run local phrase checks.</strong> Only potential matches are retained. Image content is not automatically interpreted; optionally queue media for people.</p></div><div><span class="step-number">03</span><p><strong>Review, then decide.</strong> Telegram does not let a bot undelete an original message. Restore posts a saved copy; author, timestamp, and original message ID are not recreated.</p></div></div>
+      <div class="modal-actions"><button class="button button-primary" data-close-modal type="button">Understood</button></div>
+    </section>
+  </div>
+</body>
+</html>
