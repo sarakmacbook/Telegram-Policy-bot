@@ -209,9 +209,24 @@
                 <div class="connection-steps">
                   <div class="connection-step"><span>01</span><div><strong>Create a Telegram bot</strong><p>Use <b>@BotFather</b> to create a bot and keep its token private.</p></div><i class="step-check">✓</i></div>
                   <div class="connection-step"><span>02</span><div><strong>Grant group permissions</strong><p>Add it as an admin with delete-message permission. Disable BotFather privacy mode to receive regular group messages, and give members appropriate notice before monitoring.</p></div><i class="step-check">✓</i></div>
-                  <div class="connection-step"><span>03</span><div><strong>Configure the webhook</strong><p>Set <code>BOT_TOKEN</code> and <code>WEBHOOK_SECRET</code> on the server, then register <code>/telegram/webhook</code> with Telegram.</p></div><i class="step-check">✓</i></div>
+                  <div class="connection-step"><span>03</span><div><strong>Connect and register the webhook</strong><p>Enter the bot token and public HTTPS base URL below. The console verifies the bot and configures <code>/telegram/webhook</code> for you.</p></div><i class="step-check">✓</i></div>
                 </div>
-                <div class="connection-footer"><span class="lock-mini">⌑</span><span>Bot tokens are server-side only and are never sent to this browser.</span><button id="copy-webhook-path" class="text-link" type="button">Copy webhook path</button></div>
+                <div id="telegram-connection-summary" class="connection-summary" role="status">No Telegram bot is connected yet.</div>
+                <form id="telegram-connect-form" class="connection-form">
+                  <div id="bot-token-field" class="connect-field">
+                    <label class="field-label" for="telegram-bot-token">Bot token</label>
+                    <input id="telegram-bot-token" class="text-input" type="password" maxlength="512" autocomplete="off" spellcheck="false" placeholder="Paste the token from @BotFather" required>
+                    <p class="field-help">The token is sent to this server over HTTPS, verified with Telegram, and never returned to the dashboard.</p>
+                  </div>
+                  <div class="connect-field">
+                    <label class="field-label" for="telegram-public-url">Public HTTPS base URL</label>
+                    <input id="telegram-public-url" class="text-input" type="url" maxlength="500" placeholder="https://moderation.example.com" required>
+                    <p class="field-help">Must be publicly reachable by Telegram; use the domain that serves this console.</p>
+                  </div>
+                  <button id="connect-bot-button" class="button button-primary" type="submit">Verify bot &amp; connect <span aria-hidden="true">→</span></button>
+                  <p id="telegram-connect-feedback" class="connection-feedback" role="status" aria-live="polite"></p>
+                </form>
+                <div class="connection-footer"><span class="lock-mini">⌑</span><span>Credentials are stored in the server’s private data directory (file mode 600).</span><button id="copy-webhook-path" class="text-link" type="button">Copy webhook path</button></div>
               </section>
 
               <section class="settings-card">
@@ -228,9 +243,13 @@
                   <div class="setting-copy"><strong>Auto-hide visual-review media</strong><p>Only applies when image review is enabled. This removes every queued image before a person sees it.</p><span class="setting-caution">Use with care — this is not an image classifier.</span></div>
                   <label class="switch"><input id="setting-auto-hide-media" type="checkbox"><span class="switch-track"></span><span class="sr-only">Auto-hide visual-review media</span></label>
                 </div>
-                <div class="setting-row setting-row-last">
+                <div class="setting-row">
                   <div class="setting-copy"><strong>Post a notice when a message is auto-hidden</strong><p>Tell the group a message was removed and a moderator will review it.</p></div>
                   <label class="switch"><input id="setting-notify" type="checkbox"><span class="switch-track"></span><span class="sr-only">Post a group notice</span></label>
+                </div>
+                <div class="setting-row setting-row-last">
+                  <div class="setting-copy"><strong>DM the sender after a message is removed</strong><p>Send the review reason privately after manual or automatic removal. A user must start the bot first; Telegram may still reject messages if they block it.</p><span class="setting-caution">Off by default. No DM is sent to anonymous or channel senders; failed DMs do not undo a removal.</span></div>
+                  <label class="switch"><input id="setting-dm-remove" type="checkbox"><span class="switch-track"></span><span class="sr-only">DM the sender after removal</span></label>
                 </div>
               </section>
 

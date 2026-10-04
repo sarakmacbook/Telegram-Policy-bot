@@ -32,6 +32,11 @@ IS_DEMO = APP_ENV == "demo"
 PORT = int(os.environ.get("PORT", "8000"))
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "").strip()
+BOT_TOKEN_FROM_ENV = bool(BOT_TOKEN)
+WEBHOOK_SECRET_FROM_ENV = bool(WEBHOOK_SECRET)
+BOT_TOKEN_SOURCE = "environment" if BOT_TOKEN_FROM_ENV else "none"
+BOT_USERNAME = ""
+WEBHOOK_URL = ""
 MONITOR_PRIVATE_CHATS = os.environ.get("MONITOR_PRIVATE_CHATS", "0").strip().lower() in {"1", "true", "yes"}
 MEDIA_MAX_BYTES = max(100_000, int(os.environ.get("MEDIA_MAX_BYTES", "12000000")))
 
@@ -54,6 +59,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_hide_media": os.environ.get("AUTO_HIDE_MEDIA", "0").strip().lower() in {"1", "true", "yes"},
     "review_all_media": os.environ.get("REVIEW_ALL_MEDIA", "0").strip().lower() in {"1", "true", "yes"},
     "notify_chat": os.environ.get("NOTIFY_CHAT", "1").strip().lower() in {"1", "true", "yes"},
+    "dm_on_remove": os.environ.get("DM_ON_REMOVE", "0").strip().lower() in {"1", "true", "yes"},
     "jurisdictions": os.environ.get("JURISDICTIONS", "Cambodia").strip()[:240] or "Cambodia",
     "custom_rules": ENV_CUSTOM_RULES,
 }
@@ -69,6 +75,7 @@ CREATE TABLE IF NOT EXISTS cases (
     sender_name TEXT NOT NULL DEFAULT 'Unknown sender',
     sender_username TEXT NOT NULL DEFAULT '',
     sender_id INTEGER,
+    sender_dm_allowed INTEGER NOT NULL DEFAULT 0,
     message_text TEXT NOT NULL DEFAULT '',
     media_type TEXT NOT NULL DEFAULT '',
     media_file_id TEXT NOT NULL DEFAULT '',
@@ -108,6 +115,64 @@ def open_db() -> sqlite3.Connection:
     return conn
 
 
+def load_telegram_credentials() -> None:
+    """Load credentials saved by the authenticated setup UI; environment wins."""
+    global BOT_TOKEN, WEBHOOK_SECRET, BOT_TOKEN_SOURCE, BOT_USERNAME, WEBHOOK_URL
+    path = DATA_DIR / "telegram_credentials.json"
+    try:
+        credentials = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, json.JSONDecodeError, TypeError):
+        print("Warning: saved Telegram connection settings could not be read.", file=sys.stderr, flush=True)
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    if not isinstance(credentials, dict):
+        return
+    saved_token = str(credentials.get("bot_token", "")).strip()
+    saved_secret = str(credentials.get("webhook_secret", "")).strip()
+    if not BOT_TOKEN and saved_token:
+        BOT_TOKEN = saved_token
+        BOT_TOKEN_SOURCE = "web_ui"
+    if not WEBHOOK_SECRET and saved_secret:
+        WEBHOOK_SECRET = saved_secret
+    if BOT_TOKEN_SOURCE == "web_ui":
+        BOT_USERNAME = str(credentials.get("bot_username", "")).strip().lstrip("@")[:64]
+        WEBHOOK_URL = str(credentials.get("webhook_url", "")).strip()[:500]
+
+
+def save_telegram_credentials(token: str, secret: str, username: str, webhook_url: str) -> None:
+    """Persist a UI-connected bot token and webhook secret in the private data dir."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = DATA_DIR / "telegram_credentials.json"
+    temporary = DATA_DIR / f".telegram-credentials-{uuid.uuid4().hex}.tmp"
+    credentials = {
+        "bot_token": "" if BOT_TOKEN_FROM_ENV else token,
+        "webhook_secret": "" if WEBHOOK_SECRET_FROM_ENV else secret,
+        "bot_username": username.lstrip("@")[:64],
+        "webhook_url": webhook_url[:500],
+    }
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(credentials, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     MEDIA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -116,9 +181,13 @@ def init_db() -> None:
         os.chmod(MEDIA_DIR, 0o700)
     except OSError:
         pass
+    load_telegram_credentials()
     conn = open_db()
     try:
         conn.executescript(SCHEMA)
+        case_columns = {row["name"] for row in conn.execute("PRAGMA table_info(cases)")}
+        if "sender_dm_allowed" not in case_columns:
+            conn.execute("ALTER TABLE cases ADD COLUMN sender_dm_allowed INTEGER NOT NULL DEFAULT 0")
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings(key, value_json) VALUES (?, ?)",
@@ -277,10 +346,17 @@ def save_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:
     )
 
 
-def telegram_api(method: str, payload: dict[str, Any], *, upload: tuple[str, bytes, str] | None = None) -> dict[str, Any]:
-    if not BOT_TOKEN:
+def telegram_api(
+    method: str,
+    payload: dict[str, Any],
+    *,
+    upload: tuple[str, bytes, str] | None = None,
+    token: str | None = None,
+) -> dict[str, Any]:
+    active_token = BOT_TOKEN if token is None else token
+    if not active_token:
         raise RuntimeError("Telegram bot is not configured (BOT_TOKEN is missing).")
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    url = f"https://api.telegram.org/bot{active_token}/{method}"
     headers: dict[str, str] = {}
     if upload is None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -395,11 +471,19 @@ def handle_telegram_update(update: dict[str, Any]) -> None:
             break
     if not message:
         return
-    sender = message.get("from") or message.get("sender_chat") or {}
+    from_user = message.get("from")
+    sender = from_user or message.get("sender_chat") or {}
     if sender.get("is_bot"):
         return
     chat = message.get("chat") or {}
     chat_type = str(chat.get("type", ""))
+    sender_dm_allowed = bool(
+        chat_type in {"group", "supergroup", "private"}
+        and isinstance(from_user, dict)
+        and from_user.get("id") is not None
+        and not from_user.get("is_bot")
+        and not message.get("sender_chat")
+    )
     if chat_type == "private" and not MONITOR_PRIVATE_CHATS:
         return
 
@@ -443,9 +527,9 @@ def handle_telegram_update(update: dict[str, Any]) -> None:
         cursor = conn.execute(
             """INSERT OR IGNORE INTO cases
             (update_id, chat_id, message_id, chat_title, chat_type, sender_name, sender_username, sender_id,
-             message_text, media_type, media_file_id, category, severity, reason, source, signals_json,
-             status, created_at, message_link)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+             sender_dm_allowed, message_text, media_type, media_file_id, category, severity, reason, source,
+             signals_json, status, created_at, message_link)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
             (
                 update_id,
                 chat.get("id"),
@@ -455,6 +539,7 @@ def handle_telegram_update(update: dict[str, Any]) -> None:
                 sender_name[:160],
                 username[:64],
                 sender.get("id"),
+                int(sender_dm_allowed),
                 text,
                 media_type,
                 media_file_id,
@@ -496,8 +581,14 @@ def handle_telegram_update(update: dict[str, Any]) -> None:
         if should_hide and can_archive_for_restore and chat.get("id") is not None and message_id is not None:
             try:
                 telegram_api("deleteMessage", {"chat_id": chat["id"], "message_id": message_id})
-                conn.execute("UPDATE cases SET removed=1, operation_note='Message hidden automatically; a saved copy is available to authorized moderators.' WHERE id=?", (case_id,))
+                operation_note = "Message hidden automatically; a saved copy is available to authorized moderators."
+                conn.execute("UPDATE cases SET removed=1, operation_note=? WHERE id=?", (operation_note, case_id))
                 conn.commit()
+                if settings.get("dm_on_remove"):
+                    notice_case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+                    operation_note += " " + send_private_removal_notice(notice_case, automatic=True)
+                    conn.execute("UPDATE cases SET operation_note=? WHERE id=?", (operation_note, case_id))
+                    conn.commit()
                 if settings.get("notify_chat") and chat_type in {"group", "supergroup"}:
                     try:
                         telegram_api("sendMessage", {
@@ -521,6 +612,7 @@ def case_to_dict(row: sqlite3.Row, *, include_text: bool = True) -> dict[str, An
     except (json.JSONDecodeError, TypeError):
         result["signals"] = []
     result["removed"] = bool(result.get("removed"))
+    result["sender_dm_allowed"] = bool(result.get("sender_dm_allowed"))
     result["is_demo"] = bool(result.get("is_demo"))
     media_path = result.get("media_path", "")
     is_image = result.get("media_type") in {"photo", "image"}
@@ -538,6 +630,37 @@ def send_restored_text(chat_id: int, prefix: str, text: str) -> None:
     telegram_api("sendMessage", {"chat_id": chat_id, "text": prefix[:4096], "disable_web_page_preview": True})
     for start in range(0, len(text), 4096):
         telegram_api("sendMessage", {"chat_id": chat_id, "text": text[start:start + 4096], "disable_web_page_preview": True})
+
+
+def send_private_removal_notice(case: sqlite3.Row, *, automatic: bool) -> str:
+    """Try to explain a removal privately; Telegram only allows DMs after a user starts the bot."""
+    if not case["sender_dm_allowed"] or case["sender_id"] is None:
+        return "Private notice not sent because this message has no eligible personal sender."
+
+    def clean_line(value: Any, fallback: str, limit: int) -> str:
+        cleaned = " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())
+        return (cleaned or fallback)[:limit]
+
+    chat_title = clean_line(case["chat_title"], "the group", 100)
+    category = clean_line(case["category"], "a review signal", 100)
+    reason = clean_line(case["reason"], "the message matched a configured review check", 300)
+    disposition = "was automatically hidden for moderator review" if automatic else "was hidden by a moderator"
+    text = (
+        f'A message you posted in "{chat_title}" {disposition}.\n'
+        f"Reason: {category} — {reason}\n\n"
+        "This is a preliminary review signal, not a legal finding. If you think this was a mistake, "
+        "please contact a group moderator."
+    )
+    try:
+        telegram_api("sendMessage", {
+            "chat_id": case["sender_id"],
+            "text": text[:1000],
+            "disable_notification": True,
+            "disable_web_page_preview": True,
+        })
+        return "A private removal notice was sent to the sender."
+    except Exception:
+        return "The private removal notice could not be delivered; the sender may need to start the bot or unblock it."
 
 
 def perform_restore(case: sqlite3.Row) -> None:
@@ -583,6 +706,44 @@ def perform_restore(case: sqlite3.Row) -> None:
             send_restored_text(chat_id, prefix, text)
         return
     send_restored_text(chat_id, prefix, text)
+
+
+def validate_webhook_base_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 500:
+        raise ValueError("Enter the public HTTPS base URL for this server.")
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        raise ValueError("Enter a valid public HTTPS base URL.") from None
+    if (
+        parsed.scheme.lower() != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Use an HTTPS base URL without credentials, a path, query, or fragment.")
+    if port is not None and port not in {80, 88, 443, 8443}:
+        raise ValueError("Telegram webhooks require HTTPS on port 443, 80, 88, or 8443.")
+    return f"https://{parsed.netloc}".rstrip("/")
+
+
+def telegram_connection_info() -> dict[str, Any]:
+    return {
+        "bot_configured": bool(BOT_TOKEN),
+        "bot_username": BOT_USERNAME,
+        "bot_source": BOT_TOKEN_SOURCE,
+        "managed_by_environment": BOT_TOKEN_FROM_ENV,
+        "webhook_secret_configured": bool(WEBHOOK_SECRET),
+        "webhook_path": "/telegram/webhook",
+        "webhook_url": WEBHOOK_URL,
+        "private_chats_monitored": MONITOR_PRIVATE_CHATS,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -678,12 +839,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(get_settings())
             return
         if path == "/api/connection":
-            self.send_json({
-                "bot_configured": bool(BOT_TOKEN),
-                "webhook_secret_configured": bool(WEBHOOK_SECRET),
-                "webhook_path": "/telegram/webhook",
-                "private_chats_monitored": MONITOR_PRIVATE_CHATS,
-            })
+            self.send_json(telegram_connection_info())
             return
         if path == "/" or path == "/index.html":
             self.serve_static("index.html")
@@ -702,6 +858,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/settings":
             self.api_save_settings()
+            return
+        if path == "/api/telegram/connect":
+            self.api_telegram_connect()
             return
         if path == "/api/scan-test":
             self.api_scan_test()
@@ -841,6 +1000,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({"error": "notify_chat must be a boolean."}, 400)
                     return
                 save_setting(conn, "notify_chat", payload["notify_chat"])
+            if "dm_on_remove" in payload:
+                if not isinstance(payload["dm_on_remove"], bool):
+                    self.send_json({"error": "dm_on_remove must be a boolean."}, 400)
+                    return
+                save_setting(conn, "dm_on_remove", payload["dm_on_remove"])
             if "jurisdictions" in payload:
                 jurisdictions = str(payload["jurisdictions"]).strip()[:240]
                 save_setting(conn, "jurisdictions", jurisdictions or "Cambodia")
@@ -853,6 +1017,90 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(get_settings(conn))
         finally:
             conn.close()
+
+    def api_telegram_connect(self) -> None:
+        global BOT_TOKEN, WEBHOOK_SECRET, BOT_TOKEN_SOURCE, BOT_USERNAME, WEBHOOK_URL
+        if IS_DEMO:
+            self.send_json({"error": "Telegram connections are disabled in demo mode."}, 403)
+            return
+        origin = str(getattr(self, "headers", {}).get("Origin", "")).strip()
+        if origin:
+            try:
+                origin_scheme = urllib.parse.urlsplit(origin).scheme.lower()
+            except ValueError:
+                origin_scheme = ""
+            if origin_scheme != "https":
+                self.send_json({"error": "Use the admin console over HTTPS to submit a bot token."}, 400)
+                return
+        try:
+            payload = self.read_json()
+            base_url = validate_webhook_base_url(payload.get("public_url"))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+
+        submitted_token = str(payload.get("bot_token", "")).strip()
+        if len(submitted_token) > 512:
+            self.send_json({"error": "Bot token is too long."}, 400)
+            return
+        if BOT_TOKEN_FROM_ENV and submitted_token and submitted_token != BOT_TOKEN:
+            self.send_json({"error": "This bot token is managed by the server environment; update it there instead."}, 409)
+            return
+        active_token = submitted_token or BOT_TOKEN
+        if not active_token:
+            self.send_json({"error": "Enter a bot token from @BotFather."}, 400)
+            return
+        if len(active_token) > 512 or not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", active_token):
+            self.send_json({"error": "The bot token format is invalid."}, 400)
+            return
+
+        rotating_token = bool(BOT_TOKEN and submitted_token and submitted_token != BOT_TOKEN)
+        old_token = BOT_TOKEN if rotating_token and not BOT_TOKEN_FROM_ENV else ""
+        webhook_secret = (
+            secrets.token_urlsafe(32)
+            if rotating_token and not WEBHOOK_SECRET_FROM_ENV
+            else WEBHOOK_SECRET or secrets.token_urlsafe(32)
+        )
+        webhook_url = base_url + "/telegram/webhook"
+        try:
+            bot_info = telegram_api("getMe", {}, token=active_token)
+            if not isinstance(bot_info, dict) or not bot_info.get("is_bot"):
+                self.send_json({"error": "Telegram did not identify this token as a bot."}, 400)
+                return
+            telegram_api("setWebhook", {
+                "url": webhook_url,
+                "secret_token": webhook_secret,
+                "allowed_updates": ["message", "edited_message", "channel_post", "edited_channel_post"],
+            }, token=active_token)
+        except Exception as exc:
+            self.send_json({"error": str(exc)[:280]}, 502)
+            return
+
+        cleanup_warning = ""
+        if old_token:
+            try:
+                telegram_api("deleteWebhook", {"drop_pending_updates": False}, token=old_token)
+            except Exception:
+                cleanup_warning = "The previous bot webhook could not be removed; revoke its old token with @BotFather."
+
+        username = str(bot_info.get("username", "")).strip().lstrip("@")[:64]
+        try:
+            save_telegram_credentials(active_token, webhook_secret, username, webhook_url)
+        except Exception:
+            self.send_json({
+                "error": "Telegram accepted the webhook, but the connection could not be saved. Check DATA_DIR permissions and retry.",
+            }, 500)
+            return
+
+        BOT_TOKEN = active_token
+        WEBHOOK_SECRET = webhook_secret
+        BOT_TOKEN_SOURCE = "environment" if BOT_TOKEN_FROM_ENV else "web_ui"
+        BOT_USERNAME = username
+        WEBHOOK_URL = webhook_url
+        result = telegram_connection_info()
+        if cleanup_warning:
+            result["warning"] = cleanup_warning
+        self.send_json(result)
 
     def api_scan_test(self) -> None:
         try:
@@ -893,6 +1141,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "This case has already been reviewed."}, 409)
                 return
             operation_note = str(row["operation_note"] or "")
+            newly_removed = False
+            removal_notice_note = ""
+            settings = get_settings(conn)
             if not row["is_demo"]:
                 try:
                     if action == "hide" and not removed:
@@ -902,6 +1153,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise RuntimeError("The attachment was not archived, so hiding is blocked to preserve the option to restore it.")
                         telegram_api("deleteMessage", {"chat_id": row["chat_id"], "message_id": row["message_id"]})
                         removed = True
+                        newly_removed = True
                     elif action == "restore" and removed:
                         perform_restore(row)
                         removed = False
@@ -912,6 +1164,8 @@ class Handler(BaseHTTPRequestHandler):
                 removed = True
             elif action == "restore":
                 removed = False
+            if newly_removed and settings.get("dm_on_remove"):
+                removal_notice_note = send_private_removal_notice(row, automatic=False)
             status = "approved" if action in {"approve", "restore"} else "dismissed"
             reviewer_note = note or {
                 "approve": "Approved by moderator; original remains visible.",
@@ -921,6 +1175,8 @@ class Handler(BaseHTTPRequestHandler):
             }[action]
             if action == "hide":
                 operation_note = "Demo only — hide action was simulated." if row["is_demo"] else "Message hidden by moderator; saved case retained for review."
+                if removal_notice_note:
+                    operation_note += " " + removal_notice_note
             elif action == "restore":
                 operation_note = "Demo only — restore action was simulated." if row["is_demo"] else "A new copy was posted after review; original Telegram metadata was not recreated."
             elif action == "dismiss" and removed:
