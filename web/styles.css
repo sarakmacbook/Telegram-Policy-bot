@@ -370,6 +370,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .connection-footer { display: flex; align-items: center; gap: 7px; margin-top: 11px; color: #9aa6a8; font-size: 8px; }
 .lock-mini { color: #4e9687; font-size: 14px; transform: rotate(90deg); }
 .connection-footer .text-link { margin-left: auto; font-size: 8px; }
+.connection-summary { margin-top: 11px; padding: 8px 10px; border: 1px solid #e6eeee; border-radius: 7px; color: #75878a; background: #f8fbfb; font-size: 8px; line-height: 1.5; }
+.connection-summary.is-connected { color: #477966; border-color: #d9ece1; background: #f4faf6; }
+.connection-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin-top: 11px; padding-top: 12px; border-top: 1px solid #eff2f2; }
+.connect-field { min-width: 0; }
+.connection-form .field-label { margin-bottom: 6px; font-size: 8px; }
+.connection-form .text-input { height: 33px; font-size: 8px; }
+.connection-form .field-help { min-height: 23px; margin: 5px 0 10px; font-size: 7px; }
+.connection-form > button { width: fit-content; min-height: 33px; font-size: 8px; }
+.connection-feedback { grid-column: 1 / -1; min-height: 0; margin: 0; color: #4d8469; font-size: 8px; line-height: 1.5; }
+.connection-feedback.is-error { color: #b14e52; }
 .setting-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #eef1f1; }
 .setting-copy { flex: 1; min-width: 0; }
 .setting-copy strong { display: block; color: #4b5d61; font-size: 9px; font-weight: 700; }
@@ -563,6 +573,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .add-rule-form { grid-template-columns: 1fr; }
   .settings-card { padding: 13px 12px; }
   .connection-footer { align-items: flex-start; }
+  .connection-form { grid-template-columns: 1fr; }
+  .connection-form > button { width: 100%; }
   .settings-save-bar { margin-left: -11px; margin-right: -11px; padding-left: 11px; padding-right: 11px; }
   .save-status { font-size: 7px; }
 }

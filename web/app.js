@@ -308,7 +308,7 @@ function bindDetailActions() {
 async function reviewCase(id, action, button) {
   const item = state.activeCase;
   if (!item || item.id !== id || state.busy) return;
-  if (action === 'hide' && !item.is_demo && !window.confirm('Hide this message in Telegram? The saved case stays here. You can only restore it later by posting a new copy.')) return;
+  if (action === 'hide' && !item.is_demo && !window.confirm('Hide this message in Telegram? The saved case stays here and can only be restored by posting a new copy. If private notices are enabled and the sender has started the bot, the review reason may be sent to them.')) return;
   if (action === 'restore' && !item.is_demo && !window.confirm('Post a new copy to the Telegram chat? This cannot recreate the original message, sender, timestamp, or message ID.')) return;
   const detail = button.closest('.case-detail-panel');
   const note = $('[data-review-note]', detail)?.value.trim() || '';
@@ -329,21 +329,53 @@ async function reviewCase(id, action, button) {
 
 function setConnectionUI(connection) {
   state.connection = connection;
+  const configured = Boolean(connection?.bot_configured);
   const pill = $('#connection-indicator');
-  if (connection?.bot_configured) {
+  if (configured) {
     pill.className = 'connection-pill is-connected';
-    pill.innerHTML = '<span class="status-dot"></span><span>Bot configured</span>';
+    pill.innerHTML = '<span class="status-dot"></span><span>Bot connected</span>';
   } else {
     pill.className = 'connection-pill is-disconnected';
     pill.innerHTML = '<span class="status-dot"></span><span>Bot not connected</span>';
   }
   const badge = $('#bot-connection-badge');
-  if (connection?.bot_configured) {
-    badge.textContent = 'Token configured';
+  if (configured) {
+    badge.textContent = connection.bot_username ? `@${connection.bot_username}` : 'Bot connected';
     badge.classList.add('is-connected');
   } else {
     badge.textContent = 'Not connected';
     badge.classList.remove('is-connected');
+  }
+
+  const summary = $('#telegram-connection-summary');
+  summary.classList.toggle('is-connected', configured);
+  if (configured) {
+    const identity = connection.bot_username ? `Connected as @${connection.bot_username}.` : 'Bot token is configured.';
+    const webhook = connection.webhook_secret_configured ? 'Webhook secret is ready.' : 'Connect below to generate a webhook secret.';
+    summary.textContent = `${identity} ${webhook}${connection.webhook_url ? ` Last registered: ${connection.webhook_url}` : ''}`;
+  } else {
+    summary.textContent = 'No Telegram bot is connected yet. Add a bot token and a public HTTPS URL to set it up.';
+  }
+
+  const tokenField = $('#bot-token-field');
+  const tokenInput = $('#telegram-bot-token');
+  tokenField.hidden = Boolean(connection?.managed_by_environment);
+  tokenInput.required = !configured && !connection?.managed_by_environment;
+  tokenInput.placeholder = configured ? 'Leave blank to keep the current bot, or enter a replacement token' : 'Paste the token from @BotFather';
+  if (!$('#telegram-public-url').value) $('#telegram-public-url').value = window.location.origin;
+  const connectForm = $('#telegram-connect-form');
+  const feedback = $('#telegram-connect-feedback');
+  if (state.demo) {
+    connectForm.hidden = false;
+    $$('input, button', connectForm).forEach((control) => { control.disabled = true; });
+    feedback.classList.remove('is-error');
+    feedback.textContent = 'Telegram connection is disabled in demo mode; no Telegram requests are made.';
+  } else if (window.location.protocol !== 'https:') {
+    connectForm.hidden = true;
+    feedback.classList.add('is-error');
+    feedback.textContent = 'Open this console over HTTPS before entering a Telegram bot token.';
+  } else {
+    connectForm.hidden = false;
   }
 }
 
@@ -426,9 +458,46 @@ function populateSettings() {
   $('#setting-auto-hide-media').checked = Boolean(state.settings.auto_hide_media);
   $('#setting-review-media').checked = Boolean(state.settings.review_all_media);
   $('#setting-notify').checked = Boolean(state.settings.notify_chat);
+  $('#setting-dm-remove').checked = Boolean(state.settings.dm_on_remove);
   $('#jurisdiction-input').value = state.settings.jurisdictions || 'Cambodia';
   renderCustomRules();
   $('#settings-save-status').textContent = 'Changes save to this server.';
+}
+
+async function connectTelegramBot(event) {
+  event.preventDefault();
+  const tokenInput = $('#telegram-bot-token');
+  const button = $('#connect-bot-button');
+  const feedback = $('#telegram-connect-feedback');
+  const botToken = tokenInput.value.trim();
+  const publicUrl = $('#telegram-public-url').value.trim();
+  button.disabled = true;
+  button.textContent = 'Connecting…';
+  feedback.classList.remove('is-error');
+  feedback.textContent = 'Verifying the bot with Telegram and registering the webhook…';
+  try {
+    const connection = await api('/api/telegram/connect', {
+      method: 'POST',
+      body: JSON.stringify({ bot_token: botToken, public_url: publicUrl }),
+    });
+    setConnectionUI(connection);
+    feedback.classList.remove('is-error');
+    const successMessage = connection.bot_username
+      ? `Connected to @${connection.bot_username}; the webhook is registered.`
+      : 'Telegram bot connected and webhook registered.';
+    feedback.textContent = connection.warning ? `${successMessage} ${connection.warning}` : successMessage;
+    toast('Telegram bot connected.');
+    await refreshWorkspace();
+  } catch (error) {
+    feedback.classList.add('is-error');
+    feedback.textContent = error.message;
+  } finally {
+    tokenInput.value = '';
+    button.disabled = false;
+    button.innerHTML = state.connection?.bot_configured
+      ? 'Register / update webhook <span aria-hidden="true">→</span>'
+      : 'Verify bot &amp; connect <span aria-hidden="true">→</span>';
+  }
 }
 
 function renderCustomRules() {
@@ -453,6 +522,7 @@ async function saveSettings() {
     auto_hide_media: $('#setting-auto-hide-media').checked,
     review_all_media: $('#setting-review-media').checked,
     notify_chat: $('#setting-notify').checked,
+    dm_on_remove: $('#setting-dm-remove').checked,
     jurisdictions: $('#jurisdiction-input').value.trim() || 'Cambodia',
     custom_rules: state.settings?.custom_rules || [],
   };
@@ -564,8 +634,9 @@ function bindEvents() {
   $('#privacy-learn').addEventListener('click', () => openModal('#privacy-modal'));
   $('#topbar-help').addEventListener('click', () => openModal('#privacy-modal'));
   $('#save-settings').addEventListener('click', saveSettings);
+  $('#telegram-connect-form').addEventListener('submit', connectTelegramBot);
   $('#jurisdiction-input').addEventListener('input', () => { $('#settings-save-status').textContent = 'Unsaved changes'; });
-  ['#setting-auto-hide', '#setting-auto-hide-media', '#setting-review-media', '#setting-notify'].forEach((selector) => $(selector).addEventListener('change', () => { $('#settings-save-status').textContent = 'Unsaved changes'; }));
+  ['#setting-auto-hide', '#setting-auto-hide-media', '#setting-review-media', '#setting-notify', '#setting-dm-remove'].forEach((selector) => $(selector).addEventListener('change', () => { $('#settings-save-status').textContent = 'Unsaved changes'; }));
   $('#add-rule-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const name = $('#rule-name').value.trim();
