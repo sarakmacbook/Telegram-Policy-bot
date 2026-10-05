@@ -25,7 +25,8 @@ python -m unittest discover -s tests -v
 This repository includes a Vercel serverless entrypoint (`api/index.py`) and
 `vercel.json`. The entrypoint reuses the same standard-library HTTP handler as
 the local server, routes the dashboard and API through one function, and
-bundles the `web/` assets automatically.
+bundles the `web/` assets automatically. `.python-version` pins the deployed
+interpreter to 3.12 (the local demo still runs on Python 3.10+).
 
 For a safe hosted preview, add a stable admin key and deploy demo mode:
 
@@ -46,6 +47,49 @@ production, add the same variables for the production environment and run
 vercel env add ADMIN_TOKEN production
 vercel env add APP_ENV production   # enter: production
 vercel --prod
+```
+
+### Vercel entrypoint contract (do not break this)
+
+Before building, Vercel statically scans every `api/*.py` file and only treats
+it as a Serverless Function when the file defines a **top-level** `app`,
+`application`, or `handler` name — and `handler` must be a *class* that
+inherits from `BaseHTTPRequestHandler`
+([docs](https://vercel.com/docs/functions/runtimes/python/api-directory)).
+An import alias is invisible to that scan, so this fails the whole deployment:
+
+```python
+from app import Handler as handler   # ✗ not detected → no function is built
+```
+
+```
+Error: The pattern "api/index.py" defined in `functions` doesn't match any
+Serverless Functions inside the `api` directory.
+```
+
+`api/index.py` therefore declares a real subclass, which the scanner detects
+and the runtime accepts unchanged:
+
+```python
+from app import Handler as _Handler
+
+class handler(_Handler):   # ✓ Vercel requires this exact lower-case name
+    """..."""
+```
+
+Two related rules that `vercel.json` must keep:
+
+- every key in `functions` has to match a real file under `api/`
+  (`api/index.py`), otherwise the build is rejected with the same
+  `unmatched-function-pattern` error;
+- `includeFiles` / `excludeFiles` must be a **single glob string**, not a list.
+
+`tests/test_vercel_entrypoint.py` checks all of the above, plus that
+`api.index:handler` loads as a `BaseHTTPRequestHandler` subclass, so a future
+refactor cannot quietly re-break the deploy:
+
+```bash
+python -m unittest tests.test_vercel_entrypoint -v
 ```
 
 ### Important Vercel storage limitation
