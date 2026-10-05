@@ -20,6 +20,71 @@ Run the tests:
 python -m unittest discover -s tests -v
 ```
 
+## Deploy the console to Vercel
+
+This repository includes a Vercel serverless entrypoint (`api/index.py`) and
+`vercel.json`. The entrypoint reuses the same standard-library HTTP handler as
+the local server, routes the dashboard and API through one function, and
+bundles the `web/` assets automatically.
+
+For a safe hosted preview, add a stable admin key and deploy demo mode:
+
+```bash
+npm install --global vercel
+vercel login
+vercel env add ADMIN_TOKEN preview
+# Enter a long random value when prompted.
+vercel env add APP_ENV preview       # enter: demo
+vercel
+```
+
+Open the preview URL and sign in with the `ADMIN_TOKEN` value. To deploy to
+production, add the same variables for the production environment and run
+`vercel --prod`:
+
+```bash
+vercel env add ADMIN_TOKEN production
+vercel env add APP_ENV production   # enter: production
+vercel --prod
+```
+
+### Important Vercel storage limitation
+
+Vercel Functions do not provide a durable local filesystem. The Vercel
+adapter therefore defaults `DATA_DIR` to `/tmp/telegram-policy-bot`, which is
+writable only for the lifetime of a warm function instance. SQLite cases,
+archived media, saved settings, and UI-entered Telegram credentials can be
+lost on a cold start and are not shared reliably between function instances.
+Use the Vercel setup for a demo/preview unless you first replace the SQLite
+and local-media storage with durable services. Do not put `DATA_DIR=./data`
+in Vercel environment variables; the deployed bundle is read-only.
+
+If you accept that limitation for a temporary test bot, configure all secrets
+as Vercel environment variables rather than entering them in the dashboard:
+
+- `APP_ENV=production`
+- `ADMIN_TOKEN` — a long, stable admin key
+- `BOT_TOKEN` — the token from @BotFather
+- `WEBHOOK_SECRET` — a long, stable random secret
+
+After the production deployment, register the webhook against the deployment
+URL (Telegram requires HTTPS):
+
+```bash
+export BOT_TOKEN="<your bot token>"
+export WEBHOOK_SECRET="<your webhook secret>"
+export PUBLIC_URL="https://your-project.vercel.app"
+curl --fail-with-body -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \\
+  -d "url=${PUBLIC_URL}/telegram/webhook" \\
+  -d "secret_token=${WEBHOOK_SECRET}" \\
+  -d 'allowed_updates=["message","edited_message","channel_post","edited_channel_post"]'
+```
+
+The Vercel function must answer Telegram quickly; `vercel.json` sets a
+60-second maximum duration. Vercel preview URLs can change, so use the stable
+production domain for a webhook. See the real-bot section below for required
+Telegram permissions and the moderation safety limits.
+
 ## Connect a real Telegram bot
 
 1. Create a bot with Telegram's **@BotFather**. Keep its token private.
